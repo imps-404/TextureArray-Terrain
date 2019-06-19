@@ -1,395 +1,324 @@
-Shader "Toon/ToonTerrain"
+/////////////
+Shader "Custom/TerrainArray"
 {
-	Properties{
-	[HideInInspector] _ControlTex("_ControlTex", 2DArray) = "red" {}
-	[HideInInspector] _SplatTex("_SplatTex", 2DArray) = "white" {}
-	[HideInInspector] _NormalTex("_NormalTex", 2DArray) = "bump" {}
-	[HideInInspector] _BumpTex("_BumpTex", 2DArray) = "black" {}
 
-	_Ramp("Toon Ramp (RGB)", 2D) = "gray" {}
-
+	Properties
+	{
+		[HideInInspector] _ControlTex("_ControlTex", 2DArray) = "red" {}
+		[HideInInspector] _SplatTex("_SplatTex", 2DArray) = "white" {}
+		[HideInInspector] _NormalTex("_NormalTex", 2DArray) = "bump" {}
+		[HideInInspector] _BumpTex("_BumpTex", 2DArray) = "white" {}
+		[HideInInspector]_Attenuation("_Attenuation", Range(0.1,3)) = 1.5
+		[HideInInspector]_Specular("_Specular", Color) = (0,0,0,0)
+		[HideInInspector]_NumTextures("_NumTextures", Int) = 0
+			_SnowTex("_SnowTex", 2D) = "white" {}
+		[HideInInspector]_snowCoef("_snowCoef", Range(0,3)) = 0
 	}
 
 		SubShader
-	{
-		Tags
-	{
-		"Queue" = "Geometry"
-		"IgnoreProjector" = "False"
-		"RenderType" = "Opaque"
-	}
-		LOD 200
-		// TERRAIN PASS 
-		CGPROGRAM
-#pragma target 3.5
-#pragma  surface surf ToonRamp vertex:vert exclude_path:prepass addshadow noambient 
-#pragma shader_feature __ _PARALLAX
-#pragma shader_feature __ _NORMALMAP
-		// Access the Shaderlab properties
-	uniform sampler2D _Ramp;
-	float _Attenuation;
-	float _Scale;
-	float _Parallax;
-	float _Offset;
-	float _TileCount;
-	int _NumTextures;
+		{
+			Tags
+			{
+				"SplatCount" = "4"
+				"Queue" = "Geometry-100"
+				"RenderType" = "Opaque"
+			}
+			LOD 200
+			// TERRAIN PASS 
+			CGPROGRAM
+	#define TERRAIN_INSTANCED_PERPIXEL_NORMAL
+	#pragma target 5.0
+	#pragma surface surf Standard   exclude_path:prepass vertex:vert addshadow fullforwardshadows
+	#pragma shader_feature __ _PARALLAX
+	#pragma debug
+	#pragma require 2darray
+	#define TERRAIN_SURFACE_OUTPUT SurfaceOutputStandard
 
-	UNITY_DECLARE_TEX2DARRAY(_ControlTex);
-	UNITY_DECLARE_TEX2DARRAY(_SplatTex);
-	UNITY_DECLARE_TEX2DARRAY(_NormalTex);
-	UNITY_DECLARE_TEX2DARRAY(_BumpTex);
+	#include "UnityCG.cginc"
+	#include <Lighting.cginc>
+			//#include "UnityDeferredLibrary.cginc"
 
-	struct SurfaceOutputCustom
-	{
-		fixed3 Albedo;
-		fixed3 Normal;
-		fixed3 Emission;
-		fixed Alpha;
-	};
+			// Access the Shaderlab properties
+			uniform	float _snowCoef;
+		uniform fixed _Attenuation;
+		uniform fixed _Scale;
+		uniform fixed _Parallax;
+		uniform fixed _Normal;
+		uniform half _Offset;
+		uniform fixed _TileCount;
+		uniform int _NumTextures;
+		sampler2D _SnowTex;
+		uniform fixed4 _Specular;
+		const fixed3 desat = float3(0.22, 0.707, 0.071);
+		uniform half2 realUV;
+		uniform half2 originalUV;	
 
-	// Custom lighting model that uses a texture ramp based
-	// on angle between light direction and normal
-	inline half4 LightingToonRamp(SurfaceOutputCustom s, half3 lightDir, half atten)
-	{
-#ifndef USING_DIRECTIONAL_LIGHT
-		lightDir = normalize(lightDir);
-#endif
-		// Wrapped lighting
-		half d = dot(s.Normal, lightDir) * 0.5 + 0.5;
-		// Applied through ramp
-		half3 ramp = tex2D(_Ramp, float2(d,d)).rgb;
-		half4 c;
-		c.rgb = s.Albedo * _LightColor0.rgb * (ramp) * (atten *_Attenuation);
-		c.a = 0;
-		return c;
-	}
-	void vert(inout appdata_full v)
-	{
-		v.tangent.xyz = cross(v.normal, float3(0, 0, 1));
-		v.tangent.w = -1;
-	}
+		uniform float4 matAtt[256];
+		uniform float4 specMat[256];
+		uniform float4 snowMat[256];
 
-	float2 rand2(float2 n)
-	{
-		float2 result;
-		result.x = frac(sin(fmod(dot(n.xy, float2 (12.9898, 78.233)), 3.14)) * 43758.5453);
-		result.y = frac(sin(fmod(dot(n.yx, float2 (12.9898, 78.233)), 3.14)) * 43758.5453);
+		UNITY_DECLARE_TEX2DARRAY(_ControlTex);
+		UNITY_DECLARE_TEX2DARRAY(_SplatTex);
+		UNITY_DECLARE_TEX2DARRAY(_NormalTex);
+		UNITY_DECLARE_TEX2DARRAY(_BumpTex);
+		
+		// Surface shader input structure
+		struct Input
+		{
+			float2 uv_Control : TEXCOORD0;
+			float2 uv_Splat0 : TEXCOORD1;
 
-		return result;
-	}
+			float3 viewDir;
+			float4 vertex : POSITION;
+	
+			float sampleRatio;
 
-	float2 TextOffset(float2 n)
-	{
-		float2 result;
-		result = rand2(floor(n));
-		result = floor(result * _TileCount) / _TileCount;
-		return result;
-	}
-
-
-	// Surface shader input structure
-	struct Input
-	{
-		float2 uv_Control : TEXCOORD0;
-		float2 uv_Splat0 : TEXCOORD1;
-		float3 viewDir;
-	};
-
-	UNITY_INSTANCING_BUFFER_START(Props)
-		UNITY_DEFINE_INSTANCED_PROP(float, _TextureIndex)
-#define _TextureIndex_arr Props
-		UNITY_INSTANCING_BUFFER_END(Props)
-
-		inline float2 ParallaxOffsetSteep(half h, half height, half3 viewDir)
-	{
-		h = h * height - height / 2.0;
-
-		float3 v = normalize(viewDir);
-		v.z += 0.42;
-		return h * (v.xy / v.z);
-	}
-
-	// Surface Shader function
-	void surf(Input IN, inout SurfaceOutputCustom o)
-	{
+		};
 	
 
-		fixed2 realUV, originalUV;
-		originalUV = IN.uv_Splat0 * _Scale;
-		originalUV = (frac(originalUV) / _TileCount + TextOffset(originalUV));
+		void parallax_vert(float4 vertex, float3 normal, float4 tangent, out float3 viewDir, out float sampleRatio)
+		{
+			float4x4 mW = unity_ObjectToWorld;
+			float3 binormal = cross(normal, tangent.xyz) * tangent.w;
+			float3 EyePosition = _WorldSpaceCameraPos;
 
-		realUV = originalUV;
+			// Need to do it this way for W-normalisation and.. stuff.
+			float4 localCameraPos = mul(unity_WorldToObject, float4(_WorldSpaceCameraPos, 1));
+			float3 eyeLocal = vertex - localCameraPos;
+			float4 eyeGlobal = mul(float4(eyeLocal, 1), mW);
+			float3 E = eyeGlobal.xyz;
 
-		fixed4 splat_control = UNITY_SAMPLE_TEX2DARRAY(_ControlTex, fixed3(IN.uv_Control, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 0)));
-		fixed4 splat = fixed4(0, 0, 0, 1);
-		fixed3 col = fixed3(0, 0, 0);
+			float3x3 tangentToWorldSpace;
 
+			tangentToWorldSpace[0] = mul(normalize(tangent), mW);
+			tangentToWorldSpace[1] = mul(normalize(binormal), mW);
+			tangentToWorldSpace[2] = mul(normalize(normal), mW);
+
+			float3x3 worldToTangentSpace = transpose(tangentToWorldSpace);
+
+			viewDir = mul(E, worldToTangentSpace);
+			sampleRatio = 1 - dot(normalize(E), -normal);
+		}
+		void vert(inout appdata_full IN, out Input OUT)
+		{
+			UNITY_INITIALIZE_OUTPUT(Input, OUT);
+			parallax_vert(IN.vertex, IN.normal, IN.tangent, OUT.viewDir, OUT.sampleRatio);
+			OUT.uv_Splat0 = IN.texcoord;
+
+			IN.tangent.xyz =  cross(IN.normal, float3(0, 0, 1));
+			IN.tangent.w = -1;
+			float3 binormal = cross(IN.normal, IN.tangent); // Calculate binormal as per usual.
 		
-#if defined(_NORMALMAP)
-		fixed4 nrm;
-		fixed splatSum = dot(splat_control, fixed4(1, 1, 1, 1));
-		fixed4 flatNormal = fixed4(0.5, 0.5, 1, 0.5); // this is "flat normal" in both DXT5nm and xyz*2-1 cases
-#endif
-#if defined(_PARALLAX)
-		fixed4 bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 0)));
-		fixed h;
-		fixed2 offset;
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 0)));
-		fixed4 tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.r * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 0)));
-		nrm = splat_control.r *splat;
-#endif
-		realUV = originalUV;
-///////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 1)));
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 1)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.g * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 1)));
-		nrm += splat_control.g *splat;
-#endif
-		realUV = originalUV;
-/////////////
+		}
 
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 2)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 2)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.b * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 2)));
-		nrm += splat_control.b * splat;
-#endif
-		realUV = originalUV;
-/////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 3)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 3)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.a * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 3)));
-		nrm += splat_control.a * splat;
-#endif
-		realUV = originalUV;
-///////////////////////////////////////////////////////////////////////////////////////
+		//functions
+		float2 rand2(float2 n)
+		{
+			float2 result;
+			result.x = frac(sin(fmod(dot(n.xy, float2 (12.9898, 78.233)), 3.14)) * 43758.5453);
+			result.y = frac(sin(fmod(dot(n.yx, float2 (12.9898, 78.233)), 3.14)) * 43758.5453);
 
-		splat_control = UNITY_SAMPLE_TEX2DARRAY(_ControlTex, fixed3(IN.uv_Control, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 1)));
-///////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 4)));
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 4)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.r * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 4)));
-		nrm += splat_control.g *splat;
-#endif
-		realUV = originalUV;
-///////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 5)));
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 5)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.g * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 5)));
-		nrm += splat_control.g *splat;
-#endif
-		realUV = originalUV;
-		/////////////
+			return result;
+		}
+		float2 TextOffset(float2 n)
+		{
+			float2 result;
+			result = rand2(floor(n));
+			result = floor(result * _TileCount) / _TileCount;
+			return result;
+		}
+		float CurrentCoord(float4 col, int i,int x)
+		{
+			uint k = i;
+				[branch]if (k!= 0)
+				k -= x * 4;
+			[branch]if (k == 0)
+				return col.r;
+			else if (k == 1)
+				return col.g;
+			else if (k == 2)
+				return col.b;
+			else
+				return col.a;
+		}
 
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 6)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 6)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.b * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 6)));
-		nrm += splat_control.b * splat;
-#endif
-		realUV = originalUV;
-		/////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 7)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 7)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.a * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 7)));
-		nrm += splat_control.a * splat;
-#endif
-		realUV = originalUV;
-		///////////////////////////////////////////////////////////////////////////////////////
+		float4 Texture2DGrad(int i,float2 uv, float2 dx, float2 dy, float2 texSize)
+		{
+			//Sampling a texture by derivatives in unsupported in vert shaders in Unity but if you
+			//can manually calculate the derivates you can reproduce its effect using tex2Dlod
+			float2 px = texSize.x * dx;
+			float2 py = texSize.y * dy;
+			float lod = 0.5 * log2(max(dot(px, px), dot(py, py)));
+			return UNITY_SAMPLE_TEX2DARRAY_LOD(_BumpTex, fixed3(uv,i), lod);	
+		}
+		inline float2 ParallaxOffsetSteep( half fHeightMapScale, half3 viewDir, float sampleRatio, float2 texcoord, int index,int x)
+		{	
+			float fParallaxLimit;
+			fParallaxLimit = -length(viewDir.xy) / viewDir.z; 
+			fParallaxLimit *= fHeightMapScale;
 
-		splat_control = UNITY_SAMPLE_TEX2DARRAY(_ControlTex, fixed3(IN.uv_Control, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 2)));
-		///////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 8)));
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 8)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.r * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 8)));
-		nrm += splat_control.g *splat;
-#endif
-		realUV = originalUV;
-		///////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 9)));
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 9)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.g * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 9)));
-		nrm += splat_control.g *splat;
-#endif
-		realUV = originalUV;
-		/////////////
+			float2 vOffsetDir = normalize(viewDir.xy);
+			float2 vMaxOffset = vOffsetDir * fParallaxLimit;
 
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 10)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 10)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.b * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 10)));
-		nrm += splat_control.b * splat;
-#endif
-		realUV = originalUV;
-		/////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 11)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 11)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.a * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 11)));
-		nrm += splat_control.a * splat;
-#endif
-		realUV = originalUV;
-		//////////////
-		///////////////////////////////////////////////////////////////////////////////////////
+			int nNumSamples = (int)lerp(4, 30, saturate(sampleRatio));
+			float fStepSize = 1.0 / (float)nNumSamples;
 
-		splat_control = UNITY_SAMPLE_TEX2DARRAY(_ControlTex, fixed3(IN.uv_Control, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 3)));
-		///////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 12)));
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 12)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.r * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 13)));
-		nrm += splat_control.g *splat;
-#endif
-		realUV = originalUV;
-		///////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 13)));
-		h = bumpTex.r;
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 13)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.g * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 13)));
-		nrm += splat_control.g *splat;
-#endif
-		realUV = originalUV;
-		/////////////
+			float2 dx = ddx(texcoord);
+			float2 dy = ddy(texcoord);
+			float fCurrRayHeight = 1.0;
+			float2 vCurrOffset = float2(0, 0);
+			float2 vLastOffset = float2(0, 0);
 
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 14)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 14)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.b * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 14)));
-		nrm += splat_control.b * splat;
-#endif
-		realUV = originalUV;
-		/////////////
-#if defined(_PARALLAX)
-		bumpTex = UNITY_SAMPLE_TEX2DARRAY(_BumpTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 15)));
-		offset = ParallaxOffsetSteep(h, _Parallax, IN.viewDir);
-		realUV += offset;
-#endif
-		splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 15)));
-		tmp = splat;
-		col = lerp(col, tmp.rgb, splat_control.a * tmp.a);
-#if defined(_NORMALMAP)
-		splat = UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, UNITY_ACCESS_INSTANCED_PROP(_TextureIndex_arr, 15)));
-		nrm += splat_control.a * splat;
-#endif
-		realUV = originalUV;
-		//////////////
-#if defined(_NORMALMAP)
-		nrm = lerp(flatNormal, nrm, splatSum);
-		o.Normal = UnpackNormal(nrm);
-#endif
-		//color
-		o.Albedo = col.rgb;
+			float fLastSampledHeight = 1;
+			float fCurrSampledHeight = 1;
 
-	}
+			int nCurrSample = 0;
 
+			 while (nCurrSample < nNumSamples)
+			{
+				fCurrSampledHeight = Texture2DGrad(index, texcoord + vCurrOffset, dx, dy, float2(2048, 2048));
 
-	ENDCG
+				[branch]if (fCurrSampledHeight > fCurrRayHeight)
+				{
+					float delta1 = fCurrSampledHeight - fCurrRayHeight;
+					float delta2 = (fCurrRayHeight + fStepSize) - fLastSampledHeight;
 
+					float ratio = delta1 / (delta1 + delta2);
+
+					vCurrOffset = (ratio)* vLastOffset + (1.0 - ratio) * vCurrOffset;
+
+					nCurrSample = nNumSamples + 1;
+				}
+				else
+				{
+					nCurrSample++;
+
+					fCurrRayHeight -= fStepSize;
+
+					vLastOffset = vCurrOffset;
+					vCurrOffset += fStepSize * (vMaxOffset);
+
+					fLastSampledHeight = fCurrSampledHeight;
+				}
+			}
+			return vCurrOffset;
+		}
+
+		float4 blend_unity(float4 n1, float4 n2)
+		{
+			n1 = n1.xyzz*float4(2, 2, 2, -2) + float4(-1, -1, -1, 1);
+			n2 = n2 * 2 - 1;
+			float3 r;
+			r.x = dot(n1.zxx, n2.xyz);
+			r.y = dot(n1.yzy, n2.xyz);
+			r.z = dot(n1.xyw, -n2.xyz);
+			return float4(r,1);
+		}
+		float3 blend(float4 texture1, float a1, float4 texture2, float a2)
+		{
+			return texture1.a + a1 > texture2.a + a2 ? texture1.rgb : texture2.rgb;
+		}
+
+		// Surface Shader function
+		void surf(Input IN, inout SurfaceOutputStandard  o)
+		{
+		
+			//Scaling and multipling num tiles
+			//we are using 1st splat as reference for UV, since this a surface shader
+			
+			fixed4 snow = tex2D(_SnowTex, IN.uv_Splat0);
+			fixed4 snowSum=0;
+			//pre-set
+			fixed4 splat_control;
+			fixed4 splat = fixed4(0, 0, 0, 1);
+	
+			fixed3 col = fixed3(0, 0, 0);
+			fixed4 col2 = fixed4(0, 0, 0, 0);
+
+			o.Normal = fixed3(0, 0, 1);
+			fixed4 nrm = fixed4(0, 0, 1, 1);
+			fixed4 splatSum = fixed4(0, 0, 1, 1);
+			
+			half2 offset;
+
+			fixed smoothness = 0;
+			fixed metallic = 0;
+			half4 specular = 0;
+			int x = 0;
+			int y = 0;
+			//Loop texture array
+			for (int i = 0; i < _NumTextures; i++)
+			{
+				originalUV = _Scale*IN.uv_Splat0*matAtt[0].z;
+
+				[branch] if(i>0)
+					originalUV /= matAtt[i].z;
+
+				originalUV = (frac(originalUV) / _TileCount + TextOffset(originalUV));
+				realUV = originalUV;// 
+
+				//for control
+				if (y > 3)
+				{
+					x++;
+					y -= y;
+				}
+
+				splat_control = UNITY_SAMPLE_TEX2DARRAY(_ControlTex, fixed3(IN.uv_Control, x));
+
+				//Parallax offset
+	//#if defined(_PARALLAX)	
+				offset = ParallaxOffsetSteep(_Parallax, IN.viewDir, IN.sampleRatio, realUV, i, x);
+				realUV += offset;
+	//#endif
+
+				//Diffuse
+				splat = UNITY_SAMPLE_TEX2DARRAY(_SplatTex, fixed3(realUV,  i));
+				snow = tex2D(_SnowTex, realUV);
+				col2.rgb += CurrentCoord(splat_control, i, x)*splat.rgb;
+				col = lerp(col, splat.rgb, CurrentCoord(splat_control, i, x));
+				//
+				snowSum += snow* CurrentCoord(splat_control, i, x)*	snowMat[i].x;
+			
+			//	snowSum = lerp(col2, snowSum, 0.5)* CurrentCoord(splat_control, i, x);
+				/////NORMAL NOTES
+				//normalize dxt1, unpack for dxt5
+				//read our text from Array
+				//nrm += CurrentCoord(splat_control, i, x)*UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, i));
+				nrm.rgb += UnpackNormalWithScale(UNITY_SAMPLE_TEX2DARRAY(_NormalTex, fixed3(realUV, i)), matAtt[i].w)*CurrentCoord(splat_control, i, x);
+				//tex2D(_TerrainNormalmapTexture, IN.tc.zw).xyz * 2 - 1).xzy
+				splatSum = nrm;
+				[branch] if (y == 3 && i != 0) //check if it's a new control
+				{
+					splatSum = float4(nrm.xyz * 0.5f + 0.5f, 1.0f);
+				}
+				y++;
+				realUV = originalUV;
+
+				smoothness += matAtt[i].y*CurrentCoord(splat_control, i, x);
+				metallic += matAtt[i].x*CurrentCoord(splat_control, i, x);
+				specular += specMat[i] * CurrentCoord(splat_control, i, x);
+			}
+			if((uint)_NumTextures%4 !=0)
+			splatSum += nrm;
+			o.Normal = normalize(splatSum)-0.4;// UnpackScaleNormal(splatSum, 0);
+			col = blend(fixed4(col,1), 0.5, col2, 0.25);
+		
+
+			col = blend(fixed4(col, 1), 0.5, snowSum, _snowCoef);//lerp(col, snowSum, snowCoef);
+		
+			//other
+			o.Smoothness = smoothness * specular;// clamp(dot(col2, smoothness), 0.25, 0.75);
+			o.Metallic = metallic;// clamp(dot(col2, metallic), 0.1, 1);
+			//color
+			o.Albedo = col.rgb*_Attenuation;
+		
+			
+		
+		}
+		ENDCG
 	} // End SubShader
 
+	// Fallback to Diffuse
+	Fallback "Nature/Terrain/Diffuse"
 } 
