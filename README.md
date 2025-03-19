@@ -7,3 +7,7 @@ It does use texture array so you will need support for that.
 
 You will need a script to fill in the infos needed, like snow coef, the texture array, etc.
 
+Preview
+https://files.catbox.moe/rr6p02.mp4
+https://files.catbox.moe/h96rgs.mp4
+
