@@ -8,6 +8,13 @@ It does use texture array so you will need support for that.
 You will need a script to fill in the infos needed, like snow coef, the texture array, etc.
 
 Preview
-https://files.catbox.moe/rr6p02.mp4
-https://files.catbox.moe/h96rgs.mp4
+
+
+
+
+https://github.com/user-attachments/assets/41fff7e4-e9c4-4c55-b8aa-bf5261447958
+
+
+
+https://github.com/user-attachments/assets/64638684-2a84-4edb-b674-b61e3da1d359
 
